@@ -2,7 +2,7 @@
  * Copyright 2018, Strimzi authors.
  * License: Apache License 2.0 (see the file LICENSE or http://apache.org/licenses/LICENSE-2.0.html).
  */
-package io.strimzi.operator.user.operator;
+package io.strimzi.operator.common;
 
 import java.security.SecureRandom;
 
@@ -11,6 +11,12 @@ public class PasswordGenerator {
     private final SecureRandom rng = new SecureRandom();
     private final int length;
     private final String alphabet;
+
+    public PasswordGenerator(int length) {
+        this(length, "abcdefghijklmnopqrstuvwxyz" +
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
+                "0123456789");
+    }
 
     public PasswordGenerator(int length, String alphabet) {
         this.length = length;

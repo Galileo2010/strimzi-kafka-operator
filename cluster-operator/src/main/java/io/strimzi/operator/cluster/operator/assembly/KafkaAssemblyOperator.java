@@ -425,6 +425,7 @@ public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesCl
                                 log.debug("{}: Rolling Pod {} to {}", reconciliation, pod.getMetadata().getName(), reasons);
                                 return true;
                             },
+                                    clusterCa.caCertSecret(),
                             oldCoSecret);
                         })
                         .compose(i -> kafkaSetOperations.getAsync(namespace, KafkaCluster.kafkaClusterName(name)))
@@ -432,7 +433,9 @@ public class KafkaAssemblyOperator extends AbstractAssemblyOperator<KubernetesCl
                             return kafkaSetOperations.maybeRollingUpdate(ss, pod -> {
                                 log.debug("{}: Rolling Pod {} to {}", reconciliation, pod.getMetadata().getName(), reasons);
                                 return true;
-                            });
+                            },
+                                    clusterCa.caCertSecret(),
+                                    oldCoSecret);
                         })
                         .compose(i -> deploymentOperations.getAsync(namespace, TopicOperator.topicOperatorName(name)))
                         .compose(dep -> {

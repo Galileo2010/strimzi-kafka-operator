@@ -4,10 +4,17 @@
  */
 package io.strimzi.operator.cluster.operator.resource;
 
+import io.fabric8.kubernetes.api.model.Pod;
+import io.fabric8.kubernetes.api.model.Secret;
+import io.fabric8.kubernetes.api.model.apps.StatefulSet;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.strimzi.operator.common.BackOff;
+import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+
+import java.util.function.Predicate;
 
 /**
  * Specialization of {@link StatefulSetOperator} for StatefulSets of Kafka brokers
@@ -15,6 +22,7 @@ import org.apache.logging.log4j.Logger;
 public class KafkaSetOperator extends StatefulSetOperator {
 
     private static final Logger log = LogManager.getLogger(KafkaSetOperator.class);
+    private final KafkaRoller kafkaRoller;
 
     /**
      * Constructor
@@ -24,6 +32,8 @@ public class KafkaSetOperator extends StatefulSetOperator {
      */
     public KafkaSetOperator(Vertx vertx, KubernetesClient client, long operationTimeoutMs) {
         super(vertx, client, operationTimeoutMs);
+        this.kafkaRoller = new KafkaRoller(vertx, podOperations, 1_000, operationTimeoutMs,
+            () -> new BackOff(10_000, 2, 5));
     }
 
     @Override
@@ -46,4 +56,10 @@ public class KafkaSetOperator extends StatefulSetOperator {
         }
         return false;
     }
+
+    @Override
+    public Future<Void> maybeRollingUpdate(StatefulSet ss, Predicate<Pod> podNeedsRestart, Secret clusterCaCertSecret, Secret coKeySecret) {
+        return kafkaRoller.rollingRestart(ss, clusterCaCertSecret, coKeySecret, podNeedsRestart);
+    }
+
 }
