@@ -39,10 +39,12 @@ import io.strimzi.operator.cluster.model.ZookeeperCluster;
 import io.strimzi.operator.cluster.operator.KubernetesVersion;
 import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
 import io.strimzi.operator.cluster.operator.resource.StatefulSetOperator;
+import io.strimzi.operator.cluster.operator.resource.ZookeeperLeaderFinder;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.model.ResourceType;
 import io.strimzi.operator.common.operator.MockCertManager;
+import io.strimzi.operator.common.operator.resource.PodOperator;
 import io.strimzi.test.TestUtils;
 import io.strimzi.test.mockkube.MockKube;
 import io.vertx.core.Vertx;
@@ -55,7 +57,6 @@ import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assume;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -242,7 +243,10 @@ public class KafkaAssemblyOperatorMockTest {
     }
 
     private ResourceOperatorSupplier supplierWithMocks() {
-        return new ResourceOperatorSupplier(vertx, mockClient, new PlatformFeaturesAvailability(true, kubernetesVersion), 2_000);
+        ZookeeperLeaderFinder leaderFinder = ResourceUtils.zookeeperLeaderFinder(vertx, mockClient);
+        return new ResourceOperatorSupplier(vertx, mockClient, leaderFinder,
+                ResourceUtils.kafkaRoller(new PodOperator(vertx, mockClient)),
+                new PlatformFeaturesAvailability(true, kubernetesVersion), 2_000);
     }
 
     private KafkaAssemblyOperator createCluster(TestContext context) {
@@ -303,7 +307,6 @@ public class KafkaAssemblyOperatorMockTest {
     }
 
     @Test
-    @Ignore
     public void testUpdateClusterWithoutKafkaSecrets(TestContext context) {
         updateClusterWithoutSecrets(context,
                 KafkaCluster.clientsCaKeySecretName(CLUSTER_NAME),

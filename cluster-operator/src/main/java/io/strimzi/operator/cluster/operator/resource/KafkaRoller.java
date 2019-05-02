@@ -78,7 +78,7 @@ import static java.util.stream.IntStream.range;
  * <p>Note this algorithm still works if there is a spontaneous
  * change in controller while the rolling restart is happening.</p>
  */
-class KafkaRoller {
+public class KafkaRoller {
 
     private static final Logger log = LogManager.getLogger(KafkaRoller.class.getName());
     private static final String NO_UID = "NULL";

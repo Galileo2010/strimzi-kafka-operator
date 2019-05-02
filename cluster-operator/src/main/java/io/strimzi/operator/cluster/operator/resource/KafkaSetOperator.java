@@ -8,7 +8,6 @@ import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.apps.StatefulSet;
 import io.fabric8.kubernetes.client.KubernetesClient;
-import io.strimzi.operator.common.BackOff;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import org.apache.logging.log4j.LogManager;
@@ -30,10 +29,9 @@ public class KafkaSetOperator extends StatefulSetOperator {
      * @param vertx  The Vertx instance
      * @param client The Kubernetes client
      */
-    public KafkaSetOperator(Vertx vertx, KubernetesClient client, long operationTimeoutMs) {
+    public KafkaSetOperator(Vertx vertx, KubernetesClient client, KafkaRoller kafkaRoller, long operationTimeoutMs) {
         super(vertx, client, operationTimeoutMs);
-        this.kafkaRoller = new KafkaRoller(vertx, podOperations, 1_000, operationTimeoutMs,
-            () -> new BackOff(10_000, 2, 5));
+        this.kafkaRoller = kafkaRoller;
     }
 
     @Override

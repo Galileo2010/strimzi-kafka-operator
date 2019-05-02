@@ -29,6 +29,7 @@ import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.model.ResourceType;
 import io.strimzi.operator.common.operator.MockCertManager;
+import io.strimzi.operator.common.operator.resource.PodOperator;
 import io.strimzi.test.mockkube.MockKube;
 import io.vertx.core.Vertx;
 import io.vertx.ext.unit.Async;
@@ -111,7 +112,10 @@ public class JbodStorageTest {
         PlatformFeaturesAvailability pfa = new PlatformFeaturesAvailability(false, KubernetesVersion.V1_9);
         // creating the Kafka operator
         ResourceOperatorSupplier ros =
-                new ResourceOperatorSupplier(this.vertx, this.mockClient, pfa, 60_000L);
+                new ResourceOperatorSupplier(this.vertx, this.mockClient,
+                        ResourceUtils.zookeeperLeaderFinder(this.vertx, this.mockClient),
+                        ResourceUtils.kafkaRoller(new PodOperator(vertx, mockClient)),
+                        pfa, 60_000L);
 
         this.kao = new KafkaAssemblyOperator(this.vertx, pfa, new MockCertManager(), ros, ResourceUtils.dummyClusterOperatorConfig(VERSIONS, 2_000));
     }

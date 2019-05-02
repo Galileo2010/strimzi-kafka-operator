@@ -7,10 +7,15 @@ package io.strimzi.operator.cluster;
 import io.fabric8.kubernetes.api.model.LoadBalancerIngressBuilder;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
+import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.api.model.ServiceBuilder;
 import io.fabric8.kubernetes.api.model.ServicePortBuilder;
+import io.fabric8.kubernetes.api.model.apps.StatefulSet;
+import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.KubernetesClientException;
+import io.fabric8.kubernetes.client.Watcher;
 import io.fabric8.openshift.api.model.RouteBuilder;
 import io.strimzi.api.kafka.model.EphemeralStorage;
 import io.strimzi.api.kafka.model.Kafka;
@@ -41,9 +46,12 @@ import io.strimzi.operator.cluster.model.ClusterCa;
 import io.strimzi.operator.cluster.model.KafkaCluster;
 import io.strimzi.operator.cluster.model.KafkaVersion;
 import io.strimzi.operator.cluster.model.ZookeeperCluster;
+import io.strimzi.operator.cluster.operator.resource.KafkaRoller;
 import io.strimzi.operator.cluster.operator.resource.KafkaSetOperator;
 import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
+import io.strimzi.operator.cluster.operator.resource.ZookeeperLeaderFinder;
 import io.strimzi.operator.cluster.operator.resource.ZookeeperSetOperator;
+import io.strimzi.operator.common.BackOff;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.operator.MockCertManager;
 import io.strimzi.operator.common.operator.resource.BuildConfigOperator;
@@ -65,6 +73,10 @@ import io.strimzi.operator.common.operator.resource.ServiceAccountOperator;
 import io.strimzi.operator.common.operator.resource.ServiceOperator;
 import io.strimzi.test.TestUtils;
 import io.vertx.core.Future;
+import io.vertx.core.Vertx;
+import io.vertx.core.net.NetClientOptions;
+import io.vertx.core.net.PemKeyCertOptions;
+import io.vertx.core.net.PemTrustOptions;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -73,6 +85,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.singleton;
@@ -459,6 +472,60 @@ public class ResourceUtils {
             });
         } catch (IOException e) {
         }
+    }
+
+    public static ZookeeperLeaderFinder zookeeperLeaderFinder(Vertx vertx, KubernetesClient client) {
+        return new ZookeeperLeaderFinder(vertx, new SecretOperator(vertx, client),
+            () -> new BackOff(5_000, 2, 4)) {
+                @Override
+                protected Future<Boolean> isLeader(Pod pod, NetClientOptions options) {
+                    return Future.succeededFuture(true);
+                }
+
+                @Override
+                protected PemTrustOptions trustOptions(Secret s) {
+                    return new PemTrustOptions();
+                }
+
+                @Override
+                protected PemKeyCertOptions keyCertOptions(Secret s) {
+                    return new PemKeyCertOptions();
+                }
+            };
+    }
+
+    public static KafkaRoller kafkaRoller(PodOperator podOperator) {
+        return new KafkaRoller(null, podOperator, 0, 0, null) {
+            @Override
+            public Future<Void> rollingRestart(StatefulSet ss,
+                                               Secret clusterCaCertSecret, Secret coKeySecret, Predicate<Pod> podNeedsRestart) {
+                Future<Void> future = Future.succeededFuture();
+                for (int i = 0; i < ss.getSpec().getReplicas(); i++) {
+                    String podName = KafkaCluster.kafkaPodName(ss.getMetadata().getName().replaceAll("-kafka$", ""), i);
+                    Pod pod = podOperator.get(ss.getMetadata().getNamespace(), podName);
+                    //Future fut = Future.future();
+                    podOperator.watch(ss.getMetadata().getNamespace(), podName, new Watcher<Pod>() {
+                        @Override
+                        public void eventReceived(Action action, Pod resource) {
+                            if (action == Action.ADDED
+                                && podName.equals(resource.getMetadata().getName())) {
+                                //fut.complete();
+                            }
+                        }
+
+                        @Override
+                        public void onClose(KubernetesClientException cause) {
+
+                        }
+                    });
+                    if (podNeedsRestart.test(pod)) {
+                        podOperator.reconcile(ss.getMetadata().getNamespace(), podName, null);
+                    }
+                    //future = future.compose(ignore -> fut);
+                }
+                return Future.succeededFuture();
+            }
+        };
     }
 
     public static ResourceOperatorSupplier supplierWithMocks(boolean openShift) {
