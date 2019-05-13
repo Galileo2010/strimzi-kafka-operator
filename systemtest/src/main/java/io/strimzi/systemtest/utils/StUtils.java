@@ -177,11 +177,11 @@ public class StUtils {
      * Wait until the SS is ready and all of its Pods are also ready
      */
     public static void waitForAllStatefulSetPodsReady(KubernetesClient client, String namespace, String name) {
-        LOGGER.info("Waiting for StatefulSet {} to be ready", name);
+        LOGGER.debug("Waiting for StatefulSet {} to be ready", name);
         TestUtils.waitFor("statefulset " + name, Constants.POLL_INTERVAL_FOR_RESOURCE_READINESS, Constants.TIMEOUT_FOR_RESOURCE_READINESS,
             () -> client.apps().statefulSets().inNamespace(namespace).withName(name).isReady());
-        LOGGER.info("StatefulSet {} is ready", name);
-        LOGGER.info("Waiting for Pods of StatefulSet {} to be ready", name);
+        LOGGER.debug("StatefulSet {} is ready", name);
+        LOGGER.debug("Waiting for Pods of StatefulSet {} to be ready", name);
         waitForPodsReady(client, namespace, client.apps().statefulSets().inNamespace(namespace).withName(name).get().getSpec().getSelector(), true);
     }
 
@@ -217,9 +217,11 @@ public class StUtils {
      * Wait until the deployment is ready
      */
     public static void waitForDeploymentReady(KubernetesClient client, String namespace, String name) {
-        LOGGER.info("Waiting for Deployment {}", name);
+        LOGGER.debug("Waiting for Deployment {} to be ready", name);
         TestUtils.waitFor("deployment " + name, Constants.POLL_INTERVAL_FOR_RESOURCE_READINESS, Constants.TIMEOUT_FOR_RESOURCE_READINESS,
             () -> client.apps().deployments().inNamespace(namespace).withName(name).isReady());
-        LOGGER.info("Deployment {} is ready", name);
+        LOGGER.debug("Deployment {} is ready", name);
+        LOGGER.debug("Waiting for Pods of Deployment {} to be ready", name);
+        waitForPodsReady(client, namespace, client.apps().deployments().inNamespace(namespace).withName(name).get().getSpec().getSelector(), true);
     }
 }
