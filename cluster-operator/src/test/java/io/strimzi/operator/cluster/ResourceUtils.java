@@ -12,10 +12,7 @@ import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.api.model.ServiceBuilder;
 import io.fabric8.kubernetes.api.model.ServicePortBuilder;
-import io.fabric8.kubernetes.api.model.apps.StatefulSet;
 import io.fabric8.kubernetes.client.KubernetesClient;
-import io.fabric8.kubernetes.client.KubernetesClientException;
-import io.fabric8.kubernetes.client.Watcher;
 import io.fabric8.openshift.api.model.RouteBuilder;
 import io.strimzi.api.kafka.model.EphemeralStorage;
 import io.strimzi.api.kafka.model.Kafka;
@@ -46,7 +43,7 @@ import io.strimzi.operator.cluster.model.ClusterCa;
 import io.strimzi.operator.cluster.model.KafkaCluster;
 import io.strimzi.operator.cluster.model.KafkaVersion;
 import io.strimzi.operator.cluster.model.ZookeeperCluster;
-import io.strimzi.operator.cluster.operator.resource.KafkaRoller;
+import io.strimzi.operator.cluster.operator.resource.AdminClientProvider;
 import io.strimzi.operator.cluster.operator.resource.KafkaSetOperator;
 import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
 import io.strimzi.operator.cluster.operator.resource.ZookeeperLeaderFinder;
@@ -77,6 +74,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.net.NetClientOptions;
 import io.vertx.core.net.PemKeyCertOptions;
 import io.vertx.core.net.PemTrustOptions;
+import org.apache.kafka.clients.admin.AdminClient;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -85,7 +83,6 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Predicate;
 
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.singleton;
@@ -494,36 +491,11 @@ public class ResourceUtils {
             };
     }
 
-    public static KafkaRoller kafkaRoller(PodOperator podOperator) {
-        return new KafkaRoller(null, podOperator, 0, 0, null) {
+    public static AdminClientProvider adminClientProvider() {
+        return new AdminClientProvider() {
             @Override
-            public Future<Void> rollingRestart(StatefulSet ss,
-                                               Secret clusterCaCertSecret, Secret coKeySecret, Predicate<Pod> podNeedsRestart) {
-                Future<Void> future = Future.succeededFuture();
-                for (int i = 0; i < ss.getSpec().getReplicas(); i++) {
-                    String podName = KafkaCluster.kafkaPodName(ss.getMetadata().getName().replaceAll("-kafka$", ""), i);
-                    Pod pod = podOperator.get(ss.getMetadata().getNamespace(), podName);
-                    //Future fut = Future.future();
-                    podOperator.watch(ss.getMetadata().getNamespace(), podName, new Watcher<Pod>() {
-                        @Override
-                        public void eventReceived(Action action, Pod resource) {
-                            if (action == Action.ADDED
-                                && podName.equals(resource.getMetadata().getName())) {
-                                //fut.complete();
-                            }
-                        }
-
-                        @Override
-                        public void onClose(KubernetesClientException cause) {
-
-                        }
-                    });
-                    if (podNeedsRestart.test(pod)) {
-                        podOperator.reconcile(ss.getMetadata().getNamespace(), podName, null);
-                    }
-                    //future = future.compose(ignore -> fut);
-                }
-                return Future.succeededFuture();
+            public AdminClient createAdminClient(String hostname, Secret clusterCaCertSecret, Secret coKeySecret) {
+                return mock(AdminClient.class);
             }
         };
     }

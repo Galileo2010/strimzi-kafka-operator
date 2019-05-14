@@ -70,16 +70,17 @@ public class ResourceOperatorSupplier {
             new ZookeeperLeaderFinder(vertx, new SecretOperator(vertx, client),
             // Retry up to 3 times (4 attempts), with overall max delay of 35000ms
                 () -> new BackOff(5_000, 2, 4)),
-            new KafkaRoller(vertx, new PodOperator(vertx, client), 1_000, operationTimeoutMs,
-                () -> new BackOff(10_000, 2, 5)),
+                    new DefaultAdminClientProvider(),
                     pfa, operationTimeoutMs);
     }
 
-    public ResourceOperatorSupplier(Vertx vertx, KubernetesClient client, ZookeeperLeaderFinder zlf, KafkaRoller kafkaRoller, PlatformFeaturesAvailability pfa, long operationTimeoutMs) {
+    public ResourceOperatorSupplier(Vertx vertx, KubernetesClient client, ZookeeperLeaderFinder zlf,
+                                    AdminClientProvider adminClientProvider,
+                                    PlatformFeaturesAvailability pfa, long operationTimeoutMs) {
         this(new ServiceOperator(vertx, client),
                 pfa.hasRoutes() ? new RouteOperator(vertx, client.adapt(OpenShiftClient.class)) : null,
                 new ZookeeperSetOperator(vertx, client, zlf, operationTimeoutMs),
-                new KafkaSetOperator(vertx, client, kafkaRoller, operationTimeoutMs),
+                new KafkaSetOperator(vertx, client, operationTimeoutMs, adminClientProvider),
                 new ConfigMapOperator(vertx, client),
                 new SecretOperator(vertx, client),
                 new PvcOperator(vertx, client),

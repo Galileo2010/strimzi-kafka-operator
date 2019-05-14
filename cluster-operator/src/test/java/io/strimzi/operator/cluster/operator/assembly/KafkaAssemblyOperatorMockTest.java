@@ -44,7 +44,6 @@ import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.model.ResourceType;
 import io.strimzi.operator.common.operator.MockCertManager;
-import io.strimzi.operator.common.operator.resource.PodOperator;
 import io.strimzi.test.TestUtils;
 import io.strimzi.test.mockkube.MockKube;
 import io.vertx.core.Vertx;
@@ -245,7 +244,7 @@ public class KafkaAssemblyOperatorMockTest {
     private ResourceOperatorSupplier supplierWithMocks() {
         ZookeeperLeaderFinder leaderFinder = ResourceUtils.zookeeperLeaderFinder(vertx, mockClient);
         return new ResourceOperatorSupplier(vertx, mockClient, leaderFinder,
-                ResourceUtils.kafkaRoller(new PodOperator(vertx, mockClient)),
+                ResourceUtils.adminClientProvider(),
                 new PlatformFeaturesAvailability(true, kubernetesVersion), 2_000);
     }
 

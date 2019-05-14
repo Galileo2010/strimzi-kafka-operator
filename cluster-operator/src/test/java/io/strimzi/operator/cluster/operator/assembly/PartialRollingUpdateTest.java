@@ -28,7 +28,6 @@ import io.strimzi.operator.cluster.operator.resource.StatefulSetOperator;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.model.ResourceType;
 import io.strimzi.operator.common.operator.MockCertManager;
-import io.strimzi.operator.common.operator.resource.PodOperator;
 import io.strimzi.test.mockkube.MockKube;
 import io.vertx.core.Vertx;
 import io.vertx.ext.unit.Async;
@@ -151,7 +150,7 @@ public class PartialRollingUpdateTest {
     ResourceOperatorSupplier supplier(KubernetesClient bootstrapClient) {
         return new ResourceOperatorSupplier(vertx, bootstrapClient,
                 ResourceUtils.zookeeperLeaderFinder(vertx, bootstrapClient),
-                ResourceUtils.kafkaRoller(new PodOperator(vertx, bootstrapClient)),
+                ResourceUtils.adminClientProvider(),
                 new PlatformFeaturesAvailability(true, KubernetesVersion.V1_9), 60_000L);
     }
 

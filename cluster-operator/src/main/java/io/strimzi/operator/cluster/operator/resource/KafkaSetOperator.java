@@ -8,6 +8,7 @@ import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.apps.StatefulSet;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.strimzi.operator.common.BackOff;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import org.apache.logging.log4j.LogManager;
@@ -21,7 +22,8 @@ import java.util.function.Predicate;
 public class KafkaSetOperator extends StatefulSetOperator {
 
     private static final Logger log = LogManager.getLogger(KafkaSetOperator.class);
-    private final KafkaRoller kafkaRoller;
+
+    private final AdminClientProvider adminClientProvider;
 
     /**
      * Constructor
@@ -29,9 +31,10 @@ public class KafkaSetOperator extends StatefulSetOperator {
      * @param vertx  The Vertx instance
      * @param client The Kubernetes client
      */
-    public KafkaSetOperator(Vertx vertx, KubernetesClient client, KafkaRoller kafkaRoller, long operationTimeoutMs) {
+    public KafkaSetOperator(Vertx vertx, KubernetesClient client, long operationTimeoutMs,
+                            AdminClientProvider adminClientProvider) {
         super(vertx, client, operationTimeoutMs);
-        this.kafkaRoller = kafkaRoller;
+        this.adminClientProvider = adminClientProvider;
     }
 
     @Override
@@ -56,8 +59,11 @@ public class KafkaSetOperator extends StatefulSetOperator {
     }
 
     @Override
-    public Future<Void> maybeRollingUpdate(StatefulSet ss, Predicate<Pod> podNeedsRestart, Secret clusterCaCertSecret, Secret coKeySecret) {
-        return kafkaRoller.rollingRestart(ss, clusterCaCertSecret, coKeySecret, podNeedsRestart);
+    public Future<Void> maybeRollingUpdate(StatefulSet ss, Predicate<Pod> podNeedsRestart,
+                                           Secret clusterCaCertSecret, Secret coKeySecret) {
+        return new KafkaRoller(vertx, podOperations, 1_000, operationTimeoutMs,
+            () -> new BackOff(), ss, clusterCaCertSecret, coKeySecret, adminClientProvider)
+                .rollingRestart(podNeedsRestart);
     }
 
 }

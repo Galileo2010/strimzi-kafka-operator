@@ -39,7 +39,6 @@ import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.model.ResourceType;
 import io.strimzi.operator.common.operator.MockCertManager;
-import io.strimzi.operator.common.operator.resource.PodOperator;
 import io.strimzi.operator.common.operator.resource.ReconcileResult;
 import io.strimzi.test.mockkube.MockKube;
 import io.vertx.core.AsyncResult;
@@ -125,7 +124,7 @@ public class MaintenanceTimeWindowsTest {
         ResourceOperatorSupplier ros =
                 new ResourceOperatorSupplier(this.vertx, this.mockClient,
                         ResourceUtils.zookeeperLeaderFinder(this.vertx, this.mockClient),
-                        ResourceUtils.kafkaRoller(new PodOperator(vertx, mockClient)),
+                        ResourceUtils.adminClientProvider(),
                         pfa, 60_000L);
 
         KafkaAssemblyOperator kao = new KafkaAssemblyOperator(this.vertx, pfa, null, ros, ResourceUtils.dummyClusterOperatorConfig(VERSIONS, 2_000));
