@@ -247,11 +247,11 @@ public class KafkaRollerTest extends AbstractRollerTest {
         }
 
         @Override
-        protected Future<Void> adminClient(Integer podId) {
+        protected Future<AdminClient> adminClient(Integer podId) {
             if (acOpenException != null) {
                 return Future.failedFuture(acOpenException);
             }
-            this.ac = mock(AdminClient.class, invocation -> {
+            AdminClient ac = mock(AdminClient.class, invocation -> {
                 if ("close".equals(invocation.getMethod().getName())) {
                     unclosedAdminClients.remove(invocation.getMock());
                     if (acCloseException != null) {
@@ -261,12 +261,12 @@ public class KafkaRollerTest extends AbstractRollerTest {
                 }
                 throw new RuntimeException("Not mocked " + invocation.getMethod());
             });
-            unclosedAdminClients.put(this.ac, new Throwable("Pod " + podId));
-            return Future.succeededFuture();
+            unclosedAdminClients.put(ac, new Throwable("Pod " + podId));
+            return Future.succeededFuture(ac);
         }
 
         @Override
-        protected KafkaAvailability availability() {
+        protected KafkaAvailability availability(AdminClient ac) {
             return new KafkaAvailability(null) {
                 @Override
                 protected Future<Set<String>> topicNames() {

@@ -12,7 +12,6 @@ import io.strimzi.operator.common.BackOff;
 import io.strimzi.operator.common.MaxAttemptsExceededException;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.operator.resource.PodOperator;
-import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import org.apache.kafka.clients.admin.AdminClient;
@@ -72,7 +71,6 @@ public class KafkaRoller {
     private final Secret clusterCaCertSecret;
     private final Secret coKeySecret;
     private final PriorityQueue<Monitor> queue = new PriorityQueue<>();
-    protected AdminClient ac;
     protected String namespace;
     private final AdminClientProvider adminClientProvider;
 
@@ -251,11 +249,7 @@ public class KafkaRoller {
         return filterPods(podNeedsRestart)
             .compose(pod -> {
                 if (pod != null) {
-                    Future<Integer> result = Future.future();
-                    adminClient(pod)
-                        .compose(i -> findNextRollable(podNeedsRestart))
-                        .setHandler(ar -> close(result, ar));
-                    return result;
+                    return findNextRollable(podNeedsRestart);
                 } else {
                     return Future.succeededFuture();
                 }
@@ -265,15 +259,14 @@ public class KafkaRoller {
     /**
      * Returns a Future which completes with an AdminClient instance.
      */
-    protected Future<Void> adminClient(Integer podId) {
+    protected Future<AdminClient> adminClient(Integer podId) {
         String hostname = KafkaCluster.podDnsName(this.namespace, this.cluster, podName(podId)) + ":" + KafkaCluster.REPLICATION_PORT;
-        Future<Void> result = Future.future();
+        Future<AdminClient> result = Future.future();
         vertx.executeBlocking(
             f -> {
                 try {
                     log.debug("Creating AC for {}", hostname);
-                    this.ac = adminClientProvider.createAdminClient(hostname, this.clusterCaCertSecret, this.coKeySecret);
-                    f.complete();
+                    f.complete(adminClientProvider.createAdminClient(hostname, this.clusterCaCertSecret, this.coKeySecret));
                 } catch (Exception e) {
                     f.fail(e);
                 }
@@ -282,45 +275,91 @@ public class KafkaRoller {
         return result;
     }
 
-    protected void close(Future<Integer> result, AsyncResult<Integer> ar) {
-        AdminClient ac = this.ac;
-        if (ac != null) {
-            this.ac = null;
-            vertx.executeBlocking(
-                f -> {
-                    try {
-                        log.debug("Closing AC");
-                        ac.close(10, TimeUnit.SECONDS);
-                        log.debug("Closed AC");
-                        f.complete();
-                    } catch (Throwable t) {
-                        log.warn("Ignoring error from closing admin client", t);
-                        f.complete();
-                    }
-                },
-                fut -> {
-                    if (ar.failed()) {
-                        if (fut.failed()) {
-                            ar.cause().addSuppressed(fut.cause());
-                        }
-                        result.fail(ar.cause());
-                    } else if (fut.failed()) {
-                        result.fail(fut.cause());
+    protected Future<Integer> findNextRollable(Predicate<Pod> podNeedsRestart) {
+        Future<Integer> result = Future.future();
+        pollAwait().setHandler(pollResult -> {
+            if (pollResult.succeeded()) {
+                Monitor monitor = pollResult.result();
+                adminClient(monitor.podId).setHandler(acResult -> {
+                    if (acResult.succeeded()) {
+                        AdminClient adminClient = acResult.result();
+                        controller(adminClient)
+                            .compose(controller -> {
+                                Integer podId = monitor.podId;
+                                if (podId.equals(controller) && !isEmpty()) {
+                                    // Arrange to do the controller last when there are other brokers to be rolled
+                                    log.debug("Pod {} is the controller: Will roll other pods first", podId);
+                                    return requeueOrAbort(podNeedsRestart, monitor);
+                                } else {
+                                    return availability(adminClient).canRoll(podId).compose(canRoll -> {
+                                        if (canRoll) {
+                                            // The first pod in the list needs rolling and is rollable: We're done
+                                            log.debug("Can roll pod {}", podId);
+                                            return Future.succeededFuture(podId);
+                                        } else {
+                                            log.debug("Cannot roll pod {} right now (would affect availability): Will roll other pods first", podId);
+                                            return requeueOrAbort(podNeedsRestart, monitor);
+                                        }
+                                    });
+                                }
+                            }).recover(error -> {
+                                if (error instanceof AbortRollException) {
+                                    log.warn("Aborting roll: {}", error.toString());
+                                    return Future.failedFuture(error);
+                                } else {
+                                    log.warn("Non-abortive error when determining next pod to roll " +
+                                            "(next pod to be rolled might not be ideal)", error);
+                                    return Future.succeededFuture(monitor.podId);
+                                }
+                            }).setHandler(xx -> {
+                                // TODO Async
+                                vertx.executeBlocking(
+                                    f -> {
+                                        try {
+                                            log.debug("Closing AC");
+                                            adminClient.close(10, TimeUnit.SECONDS);
+                                            log.debug("Closed AC");
+                                            f.complete();
+                                        } catch (Throwable t) {
+                                            log.warn("Ignoring error from closing admin client", t);
+                                            f.complete();
+                                        }
+                                    },
+                                    fut -> {
+                                        if (xx.failed()) {
+                                            if (fut.failed()) {
+                                                xx.cause().addSuppressed(fut.cause());
+                                            }
+                                            result.fail(xx.cause());
+                                        } else if (fut.failed()) {
+                                            result.fail(fut.cause());
+                                        } else {
+                                            result.handle(xx);
+                                        }
+                                    });
+                            });
                     } else {
-                        result.handle(ar);
+                        // error opening admin client
+                        log.warn("Error opening AdminClient, using first pod", acResult.cause());
+                        result.complete(monitor.podId);
                     }
                 });
-        } else {
-            if (ar.failed()) {
-                result.complete();
             } else {
-                result.handle(ar);
+                // error in poll
+                result.fail(pollResult.cause());
             }
-        }
-    }
+        });
+        return result;
 
-    protected Future<Integer> findNextRollable(Predicate<Pod> podNeedsRestart) {
-        return pollAwait().compose(monitor ->
+
+
+
+
+
+
+
+        //////////////////////////////////////
+        /*return pollAwait().compose(monitor ->
             controller(this.ac)
                 .compose(controller -> {
                     Integer podId = monitor.podId;
@@ -349,10 +388,10 @@ public class KafkaRoller {
                                 "(next pod to be rolled might not be ideal)", error);
                         return Future.succeededFuture(monitor.podId);
                     }
-                }));
+                }));*/
     }
 
-    protected KafkaAvailability availability() {
+    protected KafkaAvailability availability(AdminClient ac) {
         return new KafkaAvailability(ac);
     }
 
