@@ -484,6 +484,7 @@ public class Resources extends AbstractResources {
         LOGGER.info("Waiting for Kafka Connect S2I {}", kafkaConnectS2I.getMetadata().getName());
         String namespace = kafkaConnectS2I.getMetadata().getNamespace();
         waitForDeploymentConfig(namespace, kafkaConnectS2I.getMetadata().getName() + "-connect");
+        StUtils.waitForDeploymentReady(client(), namespace, kafkaConnectS2I.getMetadata().getName() + "-connect");
         LOGGER.info("Kafka Connect S2I {} is ready", kafkaConnectS2I.getMetadata().getName());
         return kafkaConnectS2I;
     }
@@ -502,22 +503,6 @@ public class Resources extends AbstractResources {
         StUtils.waitForDeploymentReady(client(), namespace, deployment.getMetadata().getName());
         LOGGER.info("Deployment {} is ready", deployment.getMetadata().getName());
         return deployment;
-    }
-
-    /**
-     * Wait until the SS is ready and all of its Pods are also ready
-     */
-    @Deprecated
-    private void waitForStatefulSet(String namespace, String name) {
-        StUtils.waitForAllStatefulSetPodsReady(client(), namespace, name);
-    }
-
-    /**
-     * Wait until the deployment is ready
-     */
-    @Deprecated
-    private void waitForDeployment(String namespace, String name) {
-        StUtils.waitForDeploymentReady(client(), namespace, name);
     }
 
     private void waitForDeploymentConfig(String namespace, String name) {
