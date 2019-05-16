@@ -1046,14 +1046,18 @@ public class MockKube {
         protected OngoingStubbing<CM> mockGet(String resourceName, R resource) {
             return when(resource.get()).thenAnswer(i -> {
                 CM r = copyResource(db.get(resourceName));
-                LOGGER.debug("{} {} get {}", resourceType, resourceName, r);
+                if (LOGGER.isTraceEnabled()) {
+                    LOGGER.debug("get {} {} -> {}", resourceType, resourceName, r);
+                } else {
+                    LOGGER.debug("get {} {}", resourceType, resourceName);
+                }
                 return r;
             });
         }
 
         protected OngoingStubbing<Boolean> mockIsReady(String resourceName, R resource) {
             return when(resource.isReady()).thenAnswer(i -> {
-                LOGGER.debug("{} {} is ready", resourceType, resourceName);
+                LOGGER.debug("is_ready {} {} -> true", resourceType, resourceName);
                 return Boolean.TRUE;
             });
         }
