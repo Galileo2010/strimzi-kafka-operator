@@ -121,7 +121,7 @@ class DefaultAdminClientProvider implements AdminClientProvider {
                 trustStore.store(os, password);
             }
             return f;
-        } catch (IOException | KeyStoreException | NoSuchAlgorithmException | CertificateException e) {
+        } catch (IOException | KeyStoreException | NoSuchAlgorithmException | CertificateException | RuntimeException e) {
             if (f != null && !f.delete()) {
                 LOGGER.warn("Failed to delete temporary file in exception handler");
             }
