@@ -12,6 +12,7 @@ import io.strimzi.operator.common.BackOff;
 import io.strimzi.operator.common.MaxAttemptsExceededException;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.operator.resource.PodOperator;
+import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import org.apache.kafka.clients.admin.AdminClient;
@@ -19,9 +20,10 @@ import org.apache.kafka.common.Node;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.time.Duration;
 import java.util.List;
+import java.util.Objects;
 import java.util.PriorityQueue;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -206,34 +208,41 @@ public class KafkaRoller {
         protected final int podId;
         private long nextDeadline;
         private final BackOff backOff;
-        private long priority;
         public Monitor(int podId, BackOff backOff) {
             this.podId = podId;
             this.backOff = backOff;
             this.nextDeadline = 0;
-            this.priority = 0;
-        }
-        /** Re-queue without counting this as an attempt */
-        private Monitor retry(Logger logger) {
-            priority = System.currentTimeMillis();
-            return this;
         }
 
         /** Queue for retry after a delay */
         private Monitor backoffAndRetry(Logger logger) {
             long delayMs = backOff.delayMs();
             logger.debug("Will retry pod {} in {}ms", podId, delayMs);
-            priority = nextDeadline = System.currentTimeMillis() + delayMs;
+            nextDeadline = System.currentTimeMillis() + delayMs;
             return this;
         }
 
         @Override
         public int compareTo(Monitor other) {
-            int cmp = Long.compare(this.priority, other.priority);
+            int cmp = Long.compare(this.nextDeadline, other.nextDeadline);
             if (cmp == 0) {
                 cmp = Integer.compare(this.podId, other.podId);
             }
             return cmp;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            Monitor monitor = (Monitor) o;
+            return podId == monitor.podId &&
+                    nextDeadline == monitor.nextDeadline;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(podId, nextDeadline);
         }
 
         @Override
@@ -283,61 +292,16 @@ public class KafkaRoller {
                 adminClient(monitor.podId).setHandler(acResult -> {
                     if (acResult.succeeded()) {
                         AdminClient adminClient = acResult.result();
-                        controller(adminClient)
-                            .compose(controller -> {
-                                Integer podId = monitor.podId;
-                                if (podId.equals(controller) && !isEmpty()) {
-                                    // Arrange to do the controller last when there are other brokers to be rolled
-                                    log.debug("Pod {} is the controller: Will roll other pods first", podId);
-                                    return requeueOrAbort(podNeedsRestart, monitor);
-                                } else {
-                                    return availability(adminClient).canRoll(podId).compose(canRoll -> {
-                                        if (canRoll) {
-                                            // The first pod in the list needs rolling and is rollable: We're done
-                                            log.debug("Can roll pod {}", podId);
-                                            return Future.succeededFuture(podId);
-                                        } else {
-                                            log.debug("Cannot roll pod {} right now (would affect availability): Will roll other pods first", podId);
-                                            return requeueOrAbort(podNeedsRestart, monitor);
-                                        }
-                                    });
-                                }
-                            }).recover(error -> {
-                                if (error instanceof AbortRollException) {
-                                    log.warn("Aborting roll: {}", error.toString());
-                                    return Future.failedFuture(error);
-                                } else {
-                                    log.warn("Non-abortive error when determining next pod to roll " +
-                                            "(next pod to be rolled might not be ideal)", error);
-                                    return Future.succeededFuture(monitor.podId);
-                                }
-                            }).setHandler(xx -> {
-                                // TODO Async
-                                vertx.executeBlocking(
-                                    f -> {
-                                        try {
-                                            log.debug("Closing AC");
-                                            adminClient.close(10, TimeUnit.SECONDS);
-                                            log.debug("Closed AC");
-                                            f.complete();
-                                        } catch (Throwable t) {
-                                            log.warn("Ignoring error from closing admin client", t);
-                                            f.complete();
-                                        }
-                                    },
-                                    fut -> {
-                                        if (xx.failed()) {
-                                            if (fut.failed()) {
-                                                xx.cause().addSuppressed(fut.cause());
-                                            }
-                                            result.fail(xx.cause());
-                                        } else if (fut.failed()) {
-                                            result.fail(fut.cause());
-                                        } else {
-                                            result.handle(xx);
-                                        }
-                                    });
-                            });
+                        checkRollability(podNeedsRestart, monitor, adminClient).recover(error -> {
+                            if (error instanceof AbortRollException) {
+                                log.warn("Aborting roll: {}", error.toString());
+                                return Future.failedFuture(error);
+                            } else {
+                                log.warn("Non-abortive error when determining next pod to roll " +
+                                        "(next pod to be rolled might not be ideal)", error);
+                                return Future.succeededFuture(monitor.podId);
+                            }
+                        }).setHandler(xx -> close(adminClient, xx, result));
                     } else {
                         // error opening admin client
                         log.warn("Error opening AdminClient, using first pod", acResult.cause());
@@ -350,45 +314,60 @@ public class KafkaRoller {
             }
         });
         return result;
+    }
 
+    private Future<Integer> checkRollability(Predicate<Pod> podNeedsRestart, Monitor monitor, AdminClient adminClient) {
+        return controller(adminClient)
+            .compose(controller -> {
+                Integer podId = monitor.podId;
+                if (podId.equals(controller) && !isEmpty()) {
+                    // Arrange to do the controller last when there are other brokers to be rolled
+                    log.debug("Pod {} is the controller: Will roll other pods first", podId);
+                    return requeueOrAbort(podNeedsRestart, monitor);
+                } else {
+                    return availability(adminClient).canRoll(podId).compose(canRoll -> {
+                        if (canRoll) {
+                            // The first pod in the list needs rolling and is rollable: We're done
+                            log.debug("Can roll pod {}", podId);
+                            return Future.succeededFuture(podId);
+                        } else {
+                            log.debug("Cannot roll pod {} right now (would affect availability): Will roll other pods first", podId);
+                            return requeueOrAbort(podNeedsRestart, monitor);
+                        }
+                    });
+                }
+            });
+    }
 
-
-
-
-
-
-
-        //////////////////////////////////////
-        /*return pollAwait().compose(monitor ->
-            controller(this.ac)
-                .compose(controller -> {
-                    Integer podId = monitor.podId;
-                    if (podId.equals(controller) && !isEmpty()) {
-                        // Arrange to do the controller last when there are other brokers to be rolled
-                        log.debug("Pod {} is the controller: Will roll other pods first", podId);
-                        return requeueOrAbort(podNeedsRestart, monitor);
-                    } else {
-                        return availability().canRoll(podId).compose(canRoll -> {
-                            if (canRoll) {
-                                // The first pod in the list needs rolling and is rollable: We're done
-                                log.debug("Can roll pod {}", podId);
-                                return Future.succeededFuture(podId);
-                            } else {
-                                log.debug("Cannot roll pod {} right now (would affect availability): Will roll other pods first", podId);
-                                return requeueOrAbort(podNeedsRestart, monitor);
-                            }
-                        });
+    /**
+     * Asynchronously close the given AdminClient instance ignoring errors, then complete the
+     * given {@code result} future with the result of {@code xx}.
+     */
+    private void close(AdminClient adminClient, AsyncResult<Integer> xx, Future<Integer> result) {
+        vertx.executeBlocking(
+            f -> {
+                try {
+                    log.debug("Closing AC");
+                    adminClient.close(Duration.ofSeconds(10));
+                    log.debug("Closed AC");
+                    f.complete();
+                } catch (Throwable t) {
+                    log.warn("Ignoring error from closing admin client", t);
+                    f.complete();
+                }
+            },
+            fut -> {
+                if (xx.failed()) {
+                    if (fut.failed()) {
+                        xx.cause().addSuppressed(fut.cause());
                     }
-                }).recover(error -> {
-                    if (error instanceof AbortRollException) {
-                        log.warn("Aborting roll: {}", error.toString());
-                        return Future.failedFuture(error);
-                    } else {
-                        log.warn("Non-abortive error when determining next pod to roll " +
-                                "(next pod to be rolled might not be ideal)", error);
-                        return Future.succeededFuture(monitor.podId);
-                    }
-                }));*/
+                    result.fail(xx.cause());
+                } else if (fut.failed()) {
+                    result.fail(fut.cause());
+                } else {
+                    result.handle(xx);
+                }
+            });
     }
 
     protected KafkaAvailability availability(AdminClient ac) {
@@ -429,13 +408,6 @@ public class KafkaRoller {
         }
     }
 
-    /** Re-queue without counting this as an attempt */
-    protected Future<Integer> requeue(Predicate<Pod> podNeedsRestart, Monitor monitor) {
-        log.debug("Deferring restart of pod {}", monitor.podId);
-        queue.add(monitor.retry(log));
-        return filterAndFindNextRollable(podNeedsRestart);
-    }
-
     /**
      * Re-queue for retry, completing the returned future after a delay, or failing
      * it if it's already been retried too many times.
@@ -447,21 +419,6 @@ public class KafkaRoller {
             return filterAndFindNextRollable(podNeedsRestart);
         } catch (MaxAttemptsExceededException e) {
             return Future.failedFuture(new AbortRollException("Pod " + monitor.podId + " is still not rollable after " + monitor.backOff.maxAttempts() + " times of asking: Aborting"));
-        }
-    }
-
-    /**
-     * Re-queue for retry, completing the returned future after a delay or
-     * if it's already been retried too many time.
-     */
-    protected Future<Integer> requeueOrSucceed(Predicate<Pod> podNeedsRestart, Monitor monitor) {
-        try {
-            log.debug("Deferring restart of {}", monitor.podId);
-            queue.add(monitor.backoffAndRetry(log));
-            return filterAndFindNextRollable(podNeedsRestart);
-        } catch (MaxAttemptsExceededException e) {
-            log.info("Pod " + monitor.podId + " is still not rollable after " + monitor.backOff.maxAttempts() + " times of asking: Restarting anyway");
-            return Future.succeededFuture(monitor.podId);
         }
     }
 
